@@ -8,23 +8,20 @@
 
 | 文件 | 用途 |
 |---|---|
-| `Image.Dockerfile` | 图像工作流 worker 镜像。基于 `runpod/worker-comfyui:5.8.6-base`，烤入 art-venture / KJNodes / RMBG 自定义节点 |
-| `Video.Dockerfile` | 视频工作流 worker 镜像。同一 base，烤入 Easy-Use / WanMoeKSampler(SplitSigmasAtT) / art-venture / KJNodes / Custom-Scripts / Frame-Interpolation，并预下载 RIFE `rife49.pth`（serverless 自动下载不持久，故烤进镜像） |
-
-## 构建
-
-```bash
-docker build -f Image.Dockerfile -t <registry>/comfyui-runpod-image:<tag> .
-docker build -f Video.Dockerfile -t <registry>/comfyui-runpod-video:<tag> .
-docker push <registry>/comfyui-runpod-image:<tag>
-```
+| `Qwen.Dockerfile` | 图像工作流 worker 镜像。基于 `runpod/worker-comfyui:5.8.6-base`，烤入 art-venture / KJNodes / RMBG 自定义节点 |
+| `Wan.Dockerfile` | 视频工作流 worker 镜像。同一 base，烤入 Easy-Use / WanMoeKSampler(SplitSigmasAtT) / art-venture / KJNodes / Custom-Scripts / Frame-Interpolation，并预下载 RIFE `rife49.pth`（serverless 自动下载不持久，故烤进镜像） |
 
 ## 部署到 RunPod Serverless（要点）
 
-1. 把镜像推到容器 registry（Docker Hub / GHCR 等）。
-2. RunPod 新建 Serverless Endpoint，镜像指向上面的 tag。
-3. **CUDA 版本过滤**：worker-comfyui 5.8.x 需较新的 CUDA（约 12.6+）。若 endpoint 落到老驱动主机，会一直 `In Queue` / `initializing` 崩溃循环——务必在 endpoint 设置里加 CUDA 版本过滤。
-4. **冷启动**：大镜像 + scale-to-zero，首次在每台新主机要拉数十 GB，冷启动慢。需要稳定低延迟可设 `workersMin ≥ 1` 常驻，或改用网络卷挂模型。
+1. RunPod 新建 Serverless Endpoint，选择 `Deploy from GitHub` 进行部署，没有 connect github 的话先在 RunPod 个人设置里 connect github。
+2. 选择对应的 Github 仓库，dc8683/comfyui-runpod，分支（Branch）选择 main，Dockerfile path 根据 Endpoint 类型选择 `Qwen.Dockerfile` 或 `Wan.Dockerfile`，然后点击 Deploy。
+3. 其它配置，Endpoint type 选择 `Queue`，Worker type 选择 `GPU`，GPU configuration 根据情况选择，Environment variables 里比较重要的是填入 S3 相关的环境变量，[详情链接](https://docs.runpod.io/serverless/development/environment-variables#s3-bucket-configuration)，主要就是三个环境变量，`BUCKET_ENDPOINT_URL`、`BUCKET_ACCESS_KEY_ID`、`BUCKET_SECRET_ACCESS_KEY`，都是从 cloudflare R2 里获取的，填入后点击 Deploy 即可。
+4. 部署后，还需要修改的配置就是在 Endpoint - Manage - Edit Endpoint 里，修改 `Advanced` 配置，比较核心的是选择 Network volumes（可多选），选择 Network volumes 后，Data Center 将被锁定在 Network volumes 所在的 Data Center；Minimum CUDA version 选择 `12.6`；Enabled GPU types 基本上可以全部勾选，以下是其它核心的参数配置
+    - `Max workers`: 可并发的 worker 上限，兼做成本刹车
+    - `Active workers`: 常驻热 worker 数，24h 计费但零冷启动
+    - `Idle timeout`: 跑完一单后 worker 还热着待命多久（这段也计费），默认 5s
+    - `Enable execution timeout`: 是否启用执行超时，单任务最长运行，超时即失败停机，默认 600s
+    - `Queue delay`: 队列延迟，默认 0s，若队列里有任务，延迟时间内不再拉新 worker，避免频繁拉起 worker 导致成本上升
 
 ## 克隆与 SSH（重要）
 
